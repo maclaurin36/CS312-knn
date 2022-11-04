@@ -1,12 +1,15 @@
 import io
+import math
 import urllib.request
 
 import pandas as pd
+from numpy import add
 from scipy.io import arff
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 import numpy as np
 import matplotlib.pyplot as plt
+import heapq
 
 # KNN algorithm
 # For each point calculate its distance to all other points
@@ -53,7 +56,7 @@ class KNNClassifier(BaseEstimator, ClassifierMixin):
     def predict(self, X, k_array):
         k_dictionary = {}
         for row in X:
-            new_x, new_y, distances = get_distances(self.X, self.y, row)
+            new_x, distances, new_y = get_distances(self.X, self.y, row)
             for i, k in enumerate(k_array):
                 new_x = get_top_k(new_x, k)
                 new_y = get_top_k(new_y, k)
@@ -71,7 +74,7 @@ class KNNClassifier(BaseEstimator, ClassifierMixin):
                 else:
                     if self.weight_type == 'inverse_distance':
                         inv_distances = get_inv_dist_squared(distances)
-                        aggregates = get_sum_aggregates(np.append(new_y[..., None], inv_distances[..., None], axis=1), 1, 0)
+                        aggregates = get_sum_aggregates(np.append(inv_distances[..., None], new_y[..., None], axis=1), 1, 0)
                         guess = aggregates[0, 0]
                         self.add_k_guess(k_dictionary, guess, k)
                     else:
@@ -90,7 +93,13 @@ class KNNClassifier(BaseEstimator, ClassifierMixin):
             score : float
                 Mean accuracy of self.predict(X) wrt. y.
         """
-        return 0
+        k_dictionary = self.predict(X, [k])
+        results = k_dictionary[k]
+        correct = 0
+        for i in range(0, len(results)):
+            if results[i] == y[i]:
+                correct += 1
+        return correct / len(results)
 
     def get_prediction_by_count(self, y):
         return get_mode(y)
@@ -102,7 +111,15 @@ class KNNClassifier(BaseEstimator, ClassifierMixin):
 
 # Gets the euclidean distance between new point and all X rows for continuous data
 def real_dist(X, newPoint, ax=1):
-    return np.linalg.norm(X - newPoint, axis=ax)
+    x = X - newPoint
+    s = (x.conj() * x).real
+    sqrtFunction = np.vectorize(sqrt)
+    return sqrtFunction(add.reduce(s, axis=ax, keepdims=False))
+    # return np.linalg.norm(X - newPoint, axis=ax)
+
+def sqrt(value):
+    return math.sqrt(value)
+
 
 # Gets the euclidean distance between new point and all X rows for nominal data with a 0/1 distance metric
 def cat_dist(X, newPoint, ax=1):
@@ -136,12 +153,14 @@ def get_unique(array):
 
 # Gets the most frequent number from an array
 def get_mode(array):
-    return np.bincount(array).argmax()
+    vals, counts = np.unique(array, return_counts=True)
+    mode_value = np.argwhere(counts == np.max(counts))
+    return vals[mode_value].flatten()[0]
 
 # Aggregates a 2d matrix by the group column, summing the agg column
 def get_sum_aggregates(array, group_col_index, agg_col_index):
     unique_vals = get_unique(array[:, group_col_index])
-    my_aggregation = np.array([[unique_val, array[array[:,group_col_index]==unique_val,agg_col_index].sum()] for unique_val in unique_vals])
+    my_aggregation = np.array([[unique_val, array[array[:,group_col_index]==unique_val,agg_col_index].sum()] for unique_val in unique_vals], dtype='O')
     my_sorted_aggregation = my_aggregation[(-my_aggregation[:,-1]).argsort()]
     return my_sorted_aggregation
 
@@ -154,21 +173,62 @@ def get_num_elements(array):
         product *= elem
     return product
 
-def get_debug_data():
-    data = load_data(r"https://raw.githubusercontent.com/cs472ta/CS472/master/datasets/glass_train.arff")
-    return np.array(data)
+def decodeBytes(value):
+    return value.decode()
 
-def challenge_question():
-    data = np.array([
-        [1,5,100],
-        [0,8,101],
-        [9,9,101],
-        [10,10,100]
-    ])
-    new_point = np.array([[2,6]])
-    knnClassifier = KNNClassifier()
-    knnClassifier.fit(data[:,:-1],data[:,-1])
-    print(knnClassifier.predict(new_point, 3))
+
+def do_debug():
+    vectorizedDecoder = np.vectorize(decodeBytes)
+
+    training_data = np.array(load_data(r"https://raw.githubusercontent.com/cs472ta/CS472/master/datasets/glass_train.arff"))
+    train_x = training_data[:,:-1]
+    train_y = vectorizedDecoder(training_data[:,-1])
+
+    testing_data = np.array(load_data(r"https://raw.githubusercontent.com/cs472ta/CS472/master/datasets/glass_test.arff"))
+    test_x = testing_data[:,:-1]
+    test_y = vectorizedDecoder(testing_data[:,-1])
+
+    knn = KNNClassifier(weight_type="")
+    knn.fit(train_x, train_y)
+    print(knn.score(test_x, test_y, 3))
+
+    knn2 = KNNClassifier()
+    knn2.fit(train_x, train_y)
+    print(knn2.score(test_x, test_y, 3))
+
+def do_eval():
+    vectorizedDecoder = np.vectorize(decodeBytes)
+
+    training_data = np.array(load_data(r"https://raw.githubusercontent.com/cs472ta/CS472/master/datasets/diabetes_train.arff"))
+    train_x = training_data[:,:-1]
+    train_y = vectorizedDecoder(training_data[:,-1])
+
+    testing_data = np.array(load_data(r"https://raw.githubusercontent.com/cs472ta/CS472/master/datasets/diabetes_test.arff"))
+    test_x = testing_data[:,:-1]
+    test_y = vectorizedDecoder(testing_data[:,-1])
+
+    knn = KNNClassifier(weight_type="")
+    knn.fit(train_x, train_y)
+    print(knn.score(test_x, test_y, 3))
+
+    knn2 = KNNClassifier()
+    knn2.fit(train_x, train_y)
+    print(knn2.score(test_x, test_y, 3))
+
+def do_magic():
+    vectorizedDecoder = np.vectorize(decodeBytes)
+
+    training_data = np.array(load_data(r"https://raw.githubusercontent.com/cs472ta/CS472/master/datasets/magic_telescope_train.arff"))
+    train_x = training_data[:,:-1]
+    train_y = vectorizedDecoder(training_data[:,-1])
+
+    testing_data = np.array(load_data(r"https://raw.githubusercontent.com/cs472ta/CS472/master/datasets/magic_telescope_test.arff"))
+    test_x = testing_data[:,:-1]
+    test_y = vectorizedDecoder(testing_data[:,-1])
+
+    knn = KNNClassifier(weight_type="")
+    knn.fit(train_x, train_y)
+    print(knn.score(test_x, test_y, 3))
 
 if __name__ == "__main__":
-    get_debug_data()
+    do_magic()
