@@ -11,7 +11,7 @@ import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
-import heapq
+from sklearn.model_selection import train_test_split
 
 # KNN algorithm
 # For each point calculate its distance to all other points
@@ -38,7 +38,7 @@ def load_data(url: str):
     return data_frame
 
 class KNNClassifier(BaseEstimator, ClassifierMixin):
-    def __init__(self, columntype=[], weight_type='inverse_distance', regression=False):  ## add parameters here
+    def __init__(self, columntype=[], weight_type='inverse_distance', regression=False, hasNominal=False):  ## add parameters here
         """
         Args:
             columntype for each column tells you if continues[real] or if nominal[categoritcal].
@@ -49,6 +49,7 @@ class KNNClassifier(BaseEstimator, ClassifierMixin):
         self.X = None
         self.y = None
         self.regression = regression
+        self.has_nominal = hasNominal
 
     def fit(self, X, y):
         self.X = X
@@ -58,7 +59,7 @@ class KNNClassifier(BaseEstimator, ClassifierMixin):
     def predict(self, X, k_array):
         k_dictionary = {}
         for row in X:
-            new_x, distances, new_y = get_distances(self.X, self.y, row)
+            new_x, distances, new_y = self.get_distances(self.X, self.y, row)
             for k in k_array:
                 new_x_copy = get_top_k(new_x, k)
                 new_y_copy = get_top_k(new_y, k)
@@ -118,6 +119,40 @@ class KNNClassifier(BaseEstimator, ClassifierMixin):
             k_dictionary[k] = []
         k_dictionary[k].append(guess)
 
+    # Returns the X and y values sorted by distance from the new point along with their corresponding distances
+    def get_distances(self, X, y, newPoint):
+        if not self.has_nominal:
+            distances = real_dist(X, newPoint)
+            augmented_with_y = np.append(X, np.column_stack([y]), axis=1)
+            augmented_with_dist = np.append(augmented_with_y, np.column_stack([distances]), axis=1)
+            _, num_cols = augmented_with_dist.shape
+            sorted_augmented = augmented_with_dist[augmented_with_dist[:, num_cols - 1].argsort()]
+            new_x = sorted_augmented[:, :-2]
+            new_y = sorted_augmented[:, -1]
+            dist = sorted_augmented[:, -2]
+            return new_x, new_y, dist
+        else:
+            all_distances = []
+            for i, row in enumerate(X):
+                row_distances = []
+                for j, col in enumerate(row):
+                    if self.columntype[j] == 'nominal':
+                        row_distances.append(get_nominal_distance(X[i, j], newPoint[j]))
+                    else:
+                        row_distances.append(get_continuous_distance(X[i, j], newPoint[j]))
+                row_distances = np.array(row_distances)
+                final_distance = np.sqrt(np.power(row_distances,2).sum())
+                all_distances.append(final_distance)
+            distances = np.array(all_distances)
+            augmented_with_y = np.append(X, np.column_stack([y]), axis=1)
+            augmented_with_dist = np.append(augmented_with_y, np.column_stack([distances]), axis=1)
+            _, num_cols = augmented_with_dist.shape
+            sorted_augmented = augmented_with_dist[augmented_with_dist[:, num_cols - 1].argsort()]
+            new_x = sorted_augmented[:, :-2]
+            new_y = sorted_augmented[:, -1]
+            dist = sorted_augmented[:, -2]
+            return new_x, new_y, dist
+
 # Gets the euclidean distance between new point and all X rows for continuous data
 def real_dist(X, newPoint, ax=1):
     x = X - newPoint
@@ -128,25 +163,9 @@ def real_dist(X, newPoint, ax=1):
 def sqrt(value):
     return math.sqrt(value)
 
-
-# Gets the euclidean distance between new point and all X rows for nominal data with a 0/1 distance metric
-def cat_dist(X, newPoint, ax=1):
-    return np.linalg.norm(X != newPoint, axis=ax)
-
 def get_inv_dist_squared(distances):
     return 1.0 / (distances**2+0.0000001)
 
-# Returns the X and y values sorted by distance from the new point along with their corresponding distances
-def get_distances(X, y, newPoint):
-    distances = real_dist(X, newPoint)
-    augmented_with_y = np.append(X, np.column_stack([y]), axis=1)
-    augmented_with_dist = np.append(augmented_with_y, np.column_stack([distances]), axis=1)
-    _, num_cols = augmented_with_dist.shape
-    sorted_augmented = augmented_with_dist[augmented_with_dist[:, num_cols - 1].argsort()]
-    new_x = sorted_augmented[:,:-2]
-    new_y = sorted_augmented[:,-1]
-    dist = sorted_augmented[:,-2]
-    return new_x, new_y, dist
 
 # Gets the top k rows from a matrix
 def get_top_k(matrix, k):
@@ -186,6 +205,15 @@ def decodeBytes(value):
         return value.decode()
     return value
 
+def get_continuous_distance(inputFeaturePoint, predictionFeaturePoint):
+    if inputFeaturePoint == '?' or predictionFeaturePoint == '?':
+        return 1
+    return inputFeaturePoint - predictionFeaturePoint
+
+def get_nominal_distance(inputFeaturePoint, predictionFeaturePoint):
+    if inputFeaturePoint == '?' or predictionFeaturePoint == '?':
+        return 1
+    return int(inputFeaturePoint != predictionFeaturePoint)
 
 def do_debug():
     vectorizedDecoder = np.vectorize(decodeBytes)
@@ -266,6 +294,62 @@ def normalize_data(array):
     return newarray
 
 def do_housing():
+    normalized_train_x, train_y, normalized_test_x, test_y = get_normalized_housing_data()
+    knn = KNNClassifier(weight_type='',regression=True)
+    knn.fit(normalized_train_x, train_y)
+    k_array = [1,3,5,7,9,11,13,15]
+    mses = knn.score(normalized_test_x, test_y, k_array)
+
+    plt.plot(k_array, mses)
+    plt.title("Housing MSE by k-value")
+    plt.xlabel("K-value")
+    plt.ylabel("MSE")
+    plt.show()
+
+
+def do_magic_distance_weighting():
+    normalized_train_x, train_y, normalized_test_x, test_y = get_normalized_telescope_data()
+    knn = KNNClassifier()
+    knn.fit(normalized_train_x, train_y)
+    print(knn.score(normalized_test_x, test_y, [3]))
+
+
+def do_housing_distance_weighting():
+    normalized_train_x, train_y, normalized_test_x, test_y = get_normalized_housing_data()
+    knn = KNNClassifier(regression=True)
+    knn.fit(normalized_train_x, train_y)
+    k_array = [1,3,5,7,9,11,13,15]
+    mses = knn.score(normalized_test_x, test_y, k_array)
+
+    plt.plot(k_array, mses)
+    plt.title("Housing MSE by k-value")
+    plt.xlabel("K-value")
+    plt.ylabel("MSE")
+    plt.show()
+
+
+def do_credit():
+    data = np.array(pd.read_csv(r"https://raw.githubusercontent.com/maclaurin36/CS312-knn/master/crx.csv"))
+    nominal_feature_indices = [0,3,4,5,6,8,9,11,12]
+    continuous_feature_indices = [1,2,7,10,13,14]
+    coltypes = ['nominal','continuous','continuous','nominal','nominal','nominal','nominal','continuous','nominal','nominal','continuous','nominal','nominal','continuous','continuous']
+    for colIndex in continuous_feature_indices:
+        normalize_col = data[:, colIndex]
+        no_missing = normalize_col[normalize_col!='?'].astype(float)
+        max = np.max(no_missing)
+        min = np.min(no_missing)
+        for i, val in enumerate(normalize_col):
+            if val == '?':
+                data[i,colIndex] = '?'
+            else:
+                data[i,colIndex] = (float(normalize_col[i]) - min) / float(max - min)
+
+    train_x, test_x, train_y, test_y = train_test_split(data[:,:-1], data[:,-1], test_size=0.3)
+    knn = KNNClassifier(hasNominal=True, columntype=coltypes)
+    knn.fit(train_x, train_y)
+    print(knn.score(test_x, test_y, [3]))
+
+def get_normalized_housing_data():
     vectorizedDecoder = np.vectorize(decodeBytes)
     training_data = vectorizedDecoder(np.array(load_data(r"https://raw.githubusercontent.com/cs472ta/CS472/master/datasets/housing_train.arff")))
     train_x = training_data[:,:-1]
@@ -281,20 +365,9 @@ def do_housing():
 
     normalized_train_x = combined_normalized[:num_train_x_rows, :]
     normalized_test_x = combined_normalized[num_train_x_rows:, :]
+    return normalized_train_x, train_y, normalized_test_x, test_y
 
-    knn = KNNClassifier(weight_type='',regression=True)
-    knn.fit(normalized_train_x, train_y)
-    k_array = [1,3,5,7,9,11,13,15]
-    mses = knn.score(normalized_test_x, test_y, k_array)
-
-    plt.plot(k_array, mses)
-    plt.title("Housing MSE by k-value")
-    plt.xlabel("K-value")
-    plt.ylabel("MSE")
-    plt.show()
-
-
-def do_magic_distance_weighting():
+def get_normalized_telescope_data():
     vectorizedDecoder = np.vectorize(decodeBytes)
 
     training_data = np.array(
@@ -313,42 +386,54 @@ def do_magic_distance_weighting():
 
     normalized_train_x = combined_normalized[:num_train_x_rows, :]
     normalized_test_x = combined_normalized[num_train_x_rows:, :]
+    return normalized_train_x, train_y, normalized_test_x, test_y
 
-    knn = KNNClassifier()
-    knn.fit(normalized_train_x, train_y)
-    print(knn.score(normalized_test_x, test_y, [3]))
+def run_scikit():
+    normalized_train_x, train_y, normalized_test_x, test_y = get_normalized_telescope_data()
 
+    print("Classification with telescope")
+    knnClassifier = KNeighborsClassifier()
+    knnClassifier.fit(normalized_train_x, train_y)
+    print("k=5")
+    print(knnClassifier.score(normalized_test_x, test_y))
 
-def do_housing_distance_weighting():
-    vectorizedDecoder = np.vectorize(decodeBytes)
-    training_data = vectorizedDecoder(np.array(load_data(r"https://raw.githubusercontent.com/cs472ta/CS472/master/datasets/housing_train.arff")))
-    train_x = training_data[:,:-1]
-    train_y = training_data[:,-1]
+    knnClassifier = KNeighborsClassifier(n_neighbors=10)
+    knnClassifier.fit(normalized_train_x, train_y)
+    print("k=10")
+    print(knnClassifier.score(normalized_test_x, test_y))
 
-    testing_data = vectorizedDecoder(np.array(load_data(r"https://raw.githubusercontent.com/cs472ta/CS472/master/datasets/housing_test.arff")))
-    test_x = testing_data[:,:-1]
-    test_y = testing_data[:,-1]
+    knnClassifier = KNeighborsClassifier(weights='distance')
+    knnClassifier.fit(normalized_train_x, train_y)
+    print("k=5, distance weightings")
+    print(knnClassifier.score(normalized_test_x, test_y))
 
-    combined_data = np.concatenate((train_x, test_x))
-    combined_normalized = normalize_data(combined_data)
-    num_train_x_rows, _ = train_x.shape
+    knnClassifier = KNeighborsClassifier(weights='distance', n_neighbors=10)
+    knnClassifier.fit(normalized_train_x, train_y)
+    print("k=10, distance weightings")
+    print(knnClassifier.score(normalized_test_x, test_y))
 
-    normalized_train_x = combined_normalized[:num_train_x_rows, :]
-    normalized_test_x = combined_normalized[num_train_x_rows:, :]
+    print()
+    print("Regression with Housing data")
+    normalized_train_x, train_y, normalized_test_x, test_y = get_normalized_housing_data()
+    knnRegressor = KNeighborsRegressor()
+    knnRegressor.fit(normalized_train_x, train_y)
+    print("k=5")
+    print(knnRegressor.score(normalized_test_x, test_y))
 
-    knn = KNNClassifier(regression=True)
-    knn.fit(normalized_train_x, train_y)
-    k_array = [1,3,5,7,9,11,13,15]
-    mses = knn.score(normalized_test_x, test_y, k_array)
+    knnRegressor = KNeighborsRegressor(n_neighbors=10)
+    knnRegressor.fit(normalized_train_x, train_y)
+    print("k=10")
+    print(knnRegressor.score(normalized_test_x, test_y))
 
-    plt.plot(k_array, mses)
-    plt.title("Housing MSE by k-value")
-    plt.xlabel("K-value")
-    plt.ylabel("MSE")
-    plt.show()
+    knnRegressor = KNeighborsRegressor(n_neighbors=10, weights='distance')
+    knnRegressor.fit(normalized_train_x, train_y)
+    print("k=5, distance weightings")
+    print(knnRegressor.score(normalized_test_x, test_y))
 
-
-def do_credit():
+    knnRegressor = KNeighborsRegressor(weights='distance')
+    knnRegressor.fit(normalized_train_x, train_y)
+    print("k=10, distance weightings")
+    print(knnRegressor.score(normalized_test_x, test_y))
 
 if __name__ == "__main__":
     # do_debug()
@@ -356,4 +441,5 @@ if __name__ == "__main__":
     # do_magic()
     # do_housing()
     # do_magic_distance_weighting()
-    do_housing_distance_weighting()
+    # do_housing_distance_weighting()
+    run_scikit()
